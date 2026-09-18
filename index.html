@@ -60,7 +60,7 @@
         </div>
 
         <div id="leaderboard-overlay" class="hud-card hud-leaderboard-card hidden">
-          <div class="leaderboard-header"><span id="net-dot" class="net-dot" title="Server connection"></span>⚡ FASTEST LAPS</div>
+          <div class="leaderboard-header"><span id="net-dot" class="net-dot" title="Server connection"></span>⚡ FASTEST LAPS <span id="leaderboard-track" class="lb-track"></span></div>
           <div id="leaderboard-list" class="leaderboard-list">
             <div class="leaderboard-empty">Complete a lap to set a time</div>
           </div>
@@ -174,6 +174,12 @@
                 <div id="flag-current" class="cycle-current"></div>
                 <button id="flag-next" class="cycle-btn" title="Next flag">►</button>
               </div>
+            </div>
+
+            <div id="driver-name-block" class="setup-group setup-block hidden">
+              <span class="setup-label">DRIVER NAME</span>
+              <input id="driver-name" class="name-input" type="text" maxlength="16"
+                placeholder="Racer" autocomplete="off" autocapitalize="off" spellcheck="false" />
             </div>
 
             <div class="mode-selection-group">

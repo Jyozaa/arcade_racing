@@ -1,14 +1,12 @@
 /**
  * RaceRoom — one Durable Object instance owns the state of one multiplayer
- * racing room (player roster + persisted best-lap leaderboard).
+ * racing room (player roster + per-track best-lap leaderboards).
  *
- * Protocol parity with the legacy Node server is intentional: the client
- * (`src/network/MultiplayerClient.ts`) speaks the same messages, so only
- * the transport endpoint changed (`/ws/:roomId`).
- *
- * Client -> server: `update`, `livery`, `lap_completed`
+ * Client -> server: `update`, `livery`, `lap_completed` {lapTime, trackId},
+ *                    `hello` {name}, `get_leaderboard` {trackId}
  * Server -> client: `init`, `player_joined`, `player_left`, `player_update`,
- *                   `player_livery`, `leaderboard_update`
+ *                   `player_livery`, `player_renamed` {id, name},
+ *                   `leaderboard_update` {trackId, leaderboard}
  *
  * Uses the hibernatable WebSocket API (`acceptWebSocket` +
  * `webSocketMessage`/`webSocketClose`) so idle connections don't burn CPU.
@@ -17,15 +15,20 @@ import {
   LAP_MIN_INTERVAL_MS,
   LEADERBOARD_MAX_ENTRIES,
   LIVERIES,
+  MAX_BOARDS,
   MAX_MESSAGE_CHARS,
   UPDATE_MIN_INTERVAL_MS,
   insertLeaderboard,
   isValidLivery,
   makePlayerId,
   makePlayerName,
+  renameLeaderboardEntries,
+  sanitizeDriverName,
   sanitizeFlag,
   sanitizeLapTime,
+  sanitizeLeaderboardList,
   sanitizeLivery,
+  sanitizeTrackId,
   sanitizeUpdate,
   type LeaderboardEntry,
   type LiveryConfig,
@@ -41,13 +44,13 @@ interface Attachment {
   playerId: string;
 }
 
-const LEADERBOARD_KEY = 'leaderboard:v1';
+const LEADERBOARDS_KEY = 'leaderboards:v2';
 
 export class RaceRoom implements DurableObject {
   private ctx: DurableObjectState;
   private players: Map<string, PlayerState> = new Map(); // playerId -> state
-  private leaderboard: LeaderboardEntry[] = [];
-  private leaderboardLoaded = false;
+  private boards: Map<string, LeaderboardEntry[]> = new Map(); // trackId -> best laps
+  private boardsLoaded = false;
   private nextPlayerIndex = 0;
 
   constructor(ctx: DurableObjectState, _env: unknown) {
@@ -59,7 +62,7 @@ export class RaceRoom implements DurableObject {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('Expected a WebSocket upgrade request.', { status: 426 });
     }
-    await this.ensureLeaderboard();
+    await this.ensureBoards();
 
     const playerId = makePlayerId();
     const livery: LiveryConfig = { ...LIVERIES[this.nextPlayerIndex % LIVERIES.length] };
@@ -87,6 +90,7 @@ export class RaceRoom implements DurableObject {
     server.serializeAttachment(JSON.stringify({ playerId } satisfies Attachment));
 
     // Private init for the newcomer (roster excludes self, like legacy).
+    // Boards are fetched per track via `get_leaderboard`, so init stays small.
     const others: PlayerSnapshot[] = [];
     for (const p of this.players.values()) {
       if (p.id !== playerId) others.push(publicSnapshot(p));
@@ -98,7 +102,6 @@ export class RaceRoom implements DurableObject {
         name,
         livery,
         players: others,
-        leaderboard: this.leaderboard,
       }),
     );
 
@@ -183,18 +186,56 @@ export class RaceRoom implements DurableObject {
           if (now - player.lastLapAt < LAP_MIN_INTERVAL_MS) return; // lap spam guard
           const lapTime = sanitizeLapTime(msg['lapTime']);
           if (lapTime === null) return; // impossible / broken lap time
+          const trackId = sanitizeTrackId(msg['trackId']);
+          if (trackId === null) return; // laps must name a real track board
           player.lastLapAt = now;
           if (player.bestLapTime === null || lapTime < player.bestLapTime) {
             player.bestLapTime = lapTime;
           }
-          await this.ensureLeaderboard();
-          this.leaderboard = insertLeaderboard(this.leaderboard, {
-            id: player.id,
-            name: player.name,
-            lapTime,
+          await this.ensureBoards();
+          const board = this.getOrCreateBoard(trackId);
+          if (!board) return; // board cap reached: ignore, don't grow memory
+          this.boards.set(
+            trackId,
+            insertLeaderboard(board, { id: player.id, name: player.name, lapTime }),
+          );
+          await this.persistBoards();
+          this.broadcastAll({
+            type: 'leaderboard_update',
+            trackId,
+            leaderboard: this.boards.get(trackId),
           });
-          await this.ctx.storage.put(LEADERBOARD_KEY, this.leaderboard);
-          this.broadcastAll({ type: 'leaderboard_update', leaderboard: this.leaderboard });
+          break;
+        }
+        case 'get_leaderboard': {
+          const trackId = sanitizeTrackId(msg['trackId']);
+          if (trackId === null) return;
+          await this.ensureBoards();
+          this.sendTo(ws, {
+            type: 'leaderboard_update',
+            trackId,
+            leaderboard: this.boards.get(trackId) ?? [],
+          });
+          break;
+        }
+        case 'hello': {
+          // Driver name for Open Track, sent right after connect.
+          const name = sanitizeDriverName(msg['name']);
+          if (name === null || name === player.name) return;
+          player.name = name;
+          this.broadcastAll({ type: 'player_renamed', id: player.id, name });
+          // Keep the player's existing board rows under the new name.
+          await this.ensureBoards();
+          let touched = false;
+          for (const [trackId, board] of this.boards) {
+            const { list, changed } = renameLeaderboardEntries(board, player.id, name);
+            if (changed) {
+              this.boards.set(trackId, list);
+              touched = true;
+              this.broadcastAll({ type: 'leaderboard_update', trackId, leaderboard: list });
+            }
+          }
+          if (touched) await this.persistBoards();
           break;
         }
         default:
@@ -258,6 +299,14 @@ export class RaceRoom implements DurableObject {
     this.broadcast(msg);
   }
 
+  private sendTo(ws: WebSocket, msg: unknown): void {
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      // Dead socket: close handler will reap it.
+    }
+  }
+
   private socketPlayerId(ws: WebSocket): string | null {
     try {
       const raw = ws.deserializeAttachment() as string | null;
@@ -268,24 +317,36 @@ export class RaceRoom implements DurableObject {
     }
   }
 
-  private async ensureLeaderboard(): Promise<void> {
-    if (this.leaderboardLoaded) return;
+  private getOrCreateBoard(trackId: string): LeaderboardEntry[] | null {
+    const existing = this.boards.get(trackId);
+    if (existing) return existing;
+    if (this.boards.size >= MAX_BOARDS) return null;
+    const fresh: LeaderboardEntry[] = [];
+    this.boards.set(trackId, fresh);
+    return fresh;
+  }
+
+  private async persistBoards(): Promise<void> {
+    const snapshot: Record<string, LeaderboardEntry[]> = {};
+    for (const [trackId, board] of this.boards) {
+      snapshot[trackId] = board.slice(0, LEADERBOARD_MAX_ENTRIES);
+    }
+    await this.ctx.storage.put(LEADERBOARDS_KEY, snapshot);
+  }
+
+  private async ensureBoards(): Promise<void> {
+    if (this.boardsLoaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
-      const stored = await this.ctx.storage.get<LeaderboardEntry[]>(LEADERBOARD_KEY);
-      if (Array.isArray(stored)) {
-        // Re-validate stored rows; storage is trusted but cheap to check.
-        this.leaderboard = stored
-          .filter(
-            (e) =>
-              e &&
-              typeof e.id === 'string' &&
-              typeof e.name === 'string' &&
-              typeof e.lapTime === 'number' &&
-              Number.isFinite(e.lapTime),
-          )
-          .slice(0, LEADERBOARD_MAX_ENTRIES);
+      const stored = await this.ctx.storage.get<Record<string, unknown>>(LEADERBOARDS_KEY);
+      if (stored && typeof stored === 'object') {
+        for (const [trackId, rawBoard] of Object.entries(stored)) {
+          if (sanitizeTrackId(trackId) === null) continue;
+          if (this.boards.size >= MAX_BOARDS) break;
+          const board = sanitizeLeaderboardList(rawBoard);
+          if (board.length > 0) this.boards.set(trackId, board);
+        }
       }
-      this.leaderboardLoaded = true;
+      this.boardsLoaded = true;
     });
   }
 }

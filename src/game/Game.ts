@@ -143,7 +143,7 @@ export class Game {
 
     this.raceManager.onLapCompleted = (lapTime) => {
       if (this.currentMode === 'OPEN_TRACK') {
-        this.multiplayerClient.notifyLapCompleted(lapTime);
+        this.multiplayerClient.notifyLapCompleted(lapTime, this.currentTrackId);
       }
     };
     this.raceManager.onPlayerFinished = () => {
@@ -219,7 +219,8 @@ export class Game {
       }
 
       this.raceManager.setMode('OPEN_TRACK');
-      this.multiplayerClient.connect(undefined, this.playerCar.currentLivery, this.playerCar.flag);
+      this.multiplayerClient.connect(undefined, this.playerCar.currentLivery, this.playerCar.flag, this.hud.getDriverName());
+      this.multiplayerClient.setTrack(this.currentTrackId);
       this.camera.reset(this.playerCar);
     }
   }
@@ -256,6 +257,8 @@ export class Game {
     for (const ai of this.aiCars) ai.trackData = this.trackData;
     this.raceManager.setTrackData(this.trackData);
     this.hud.setTrackData(this.trackData);
+    // Keep the multiplayer board in sync when the track changes mid-session.
+    this.multiplayerClient.setTrack(def.id);
 
     this.lastGantryStage = -99;
     this.trackMesh.setCountdownStage(-1);

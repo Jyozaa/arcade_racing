@@ -46,6 +46,7 @@ export class HUD {
   private startDescEl!: HTMLElement;
   private leaderboardOverlayEl!: HTMLElement;
   private leaderboardListEl!: HTMLElement;
+  private leaderboardTrackEl: HTMLElement | null = null;
   private menuBestEl!: HTMLElement;
   private menuBestTimeEl!: HTMLElement;
   private selectedLaps: number = 3;
@@ -73,6 +74,8 @@ export class HUD {
   private trackCurrentEl!: HTMLElement;
   private carCurrentEl!: HTMLElement;
   private flagCurrentEl!: HTMLElement;
+  private driverNameBlockEl!: HTMLElement;
+  private driverNameInputEl!: HTMLInputElement;
   private trackIdx: number = 0;
   private carIdx: number = 0;
   private flagIdx: number = 0;
@@ -146,6 +149,7 @@ export class HUD {
     this.startDescEl = document.getElementById('start-desc')!;
     this.leaderboardOverlayEl = document.getElementById('leaderboard-overlay')!;
     this.leaderboardListEl = document.getElementById('leaderboard-list')!;
+    this.leaderboardTrackEl = document.getElementById('leaderboard-track');
     this.menuBestEl = document.getElementById('menu-best')!;
     this.menuBestTimeEl = document.getElementById('menu-best-time')!;
 
@@ -168,6 +172,17 @@ export class HUD {
     this.trackCurrentEl = document.getElementById('track-current')!;
     this.carCurrentEl = document.getElementById('car-current')!;
     this.flagCurrentEl = document.getElementById('flag-current')!;
+    this.driverNameBlockEl = document.getElementById('driver-name-block')!;
+    this.driverNameInputEl = document.getElementById('driver-name') as HTMLInputElement;
+    try {
+      const savedName = localStorage.getItem('apexgp_driver_name');
+      if (savedName) this.driverNameInputEl.value = savedName;
+    } catch { /* private mode */ }
+    this.driverNameInputEl.addEventListener('input', () => {
+      try {
+        localStorage.setItem('apexgp_driver_name', this.driverNameInputEl.value);
+      } catch { /* private mode */ }
+    });
     try {
       const saved = localStorage.getItem('apexgp_flag');
       const found = FLAG_OPTIONS.findIndex((f) => f.emoji === saved);
@@ -327,6 +342,7 @@ export class HUD {
     this.tabAiEl.classList.toggle('active', !online);
     this.tabOnlineEl.classList.toggle('active', online);
     this.aiSetupEl.classList.toggle('hidden', online);
+    this.driverNameBlockEl.classList.toggle('hidden', !online);
     this.btnStartEl.classList.toggle('btn-accent', online);
     this.btnStartEl.classList.toggle('btn-primary', !online);
     if (online) {
@@ -352,6 +368,7 @@ export class HUD {
     this.selectedTrackId = t.id;
     this.audioEngine.init();
     this.audioEngine.playClick();
+    this.refreshMenuBest();
     if (this.onSelectTrack) this.onSelectTrack(t.id);
   }
 
@@ -422,9 +439,19 @@ export class HUD {
     this.startMenuEl.classList.remove('hidden');
   }
 
+  // Driver name for Open Track (empty = server default). Persisted locally.
+  public getDriverName(): string {
+    return this.driverNameInputEl.value.trim().slice(0, 16);
+  }
+
+  // Local best laps are stored per track.
+  private bestLapKey(trackId: string): string {
+    return `apexgp_best_lap_${trackId}`;
+  }
+
   private refreshMenuBest() {
     try {
-      const raw = localStorage.getItem('apexgp_best_lap');
+      const raw = localStorage.getItem(this.bestLapKey(this.selectedTrackId));
       if (raw) {
         const v = parseFloat(raw);
         if (Number.isFinite(v) && v > 0) {
@@ -439,10 +466,11 @@ export class HUD {
 
   public saveBestLap(lapTime: number) {
     try {
-      const raw = localStorage.getItem('apexgp_best_lap');
+      const key = this.bestLapKey(this.trackData.trackId);
+      const raw = localStorage.getItem(key);
       const prev = raw ? parseFloat(raw) : Infinity;
       if (lapTime < prev) {
-        localStorage.setItem('apexgp_best_lap', lapTime.toString());
+        localStorage.setItem(key, lapTime.toString());
         this.refreshMenuBest();
       }
     } catch { /* ignore */ }
@@ -495,6 +523,9 @@ export class HUD {
   }
 
   public updateLeaderboard(entries: { id: string; name: string; lapTime: number }[], localPlayerId: string | null) {
+    if (this.leaderboardTrackEl) {
+      this.leaderboardTrackEl.innerText = this.trackData.displayName.toUpperCase();
+    }
     if (!entries || entries.length === 0) {
       this.leaderboardListEl.innerHTML = '<div class="leaderboard-empty">Complete a lap to set a time</div>';
       return;

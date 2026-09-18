@@ -140,14 +140,17 @@ without code changes (the game uses `/ws/public`).
 - `worker/index.ts` — Worker entry: serves `dist/` assets, `/health`, and
   routes `/ws/:roomId` to the `RaceRoom` Durable Object.
 - `worker/RaceRoom.ts` — one Durable Object per room; owns players,
-  broadcast, and the persisted leaderboard. Same message protocol as the old
-  Node server (`init`, `player_joined/left/update/livery`,
-  `leaderboard_update` / `update`, `livery`, `lap_completed`), with server-side
-  throttling, payload caps, lap-spam and impossible-lap guards.
+  broadcast, and the persisted **per-track** leaderboards. Protocol:
+  client sends `update`, `livery`, `lap_completed` {lapTime, trackId},
+  `hello` {name}, `get_leaderboard` {trackId}; server sends `init`,
+  `player_joined/left/update/livery`, `player_renamed` {id, name}, and
+  `leaderboard_update` {trackId, leaderboard}. Server-side throttling,
+  payload caps, lap-spam and impossible-lap guards included.
 - `worker/protocol.ts` — dependency-free validation/leaderboard helpers.
-- `src/network/MultiplayerClient.ts` — unchanged behaviour; defaults to the
-  same-origin `/ws/public` endpoint with the `?server=` override kept for
-  debugging.
+- `src/network/MultiplayerClient.ts` — caches one board per track, defaults
+  to the same-origin `/ws/public` endpoint with the `?server=` override kept
+  for debugging. Enter a driver name in the Open Track menu (saved locally,
+  sent via `hello`); each track keeps its own fastest-lap board.
 
 ## Finish cinematic
 

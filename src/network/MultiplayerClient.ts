@@ -38,6 +38,12 @@ function sanitizeFlag(raw: any): string {
   return typeof raw === 'string' && raw.length > 0 ? raw.slice(0, 8) : '🏁';
 }
 
+// Driver names are display strings; the server re-validates. Empty = keep default.
+function sanitizeDriverName(raw: any): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 16);
+}
+
 export class MultiplayerClient {
   private ws: WebSocket | null = null;
   private scene: THREE.Scene;
@@ -52,6 +58,10 @@ export class MultiplayerClient {
   private remotePlayers: Map<string, RemotePlayer> = new Map();
   private onLeaderboardUpdate: ((leaderboard: LeaderboardEntry[]) => void) | null = null;
 
+  // Per-track fastest-lap boards (server is source of truth; this is a cache).
+  private boards: Map<string, LeaderboardEntry[]> = new Map();
+  private currentTrackId: string = 'apex-gp';
+
   private sendInterval: number = 0.05; // 20 Hz
   private sendTimer: number = 0;
   private reconnectAttempts: number = 0;
@@ -60,6 +70,7 @@ export class MultiplayerClient {
   private manualDisconnect: boolean = false;
   private pendingLivery: CarColorConfig | null = null;
   private pendingFlag: string = '🏁';
+  private pendingName: string = '';
 
   constructor(scene: THREE.Scene, playerCar: PlayerCar, onLeaderboardUpdate?: (lb: LeaderboardEntry[]) => void) {
     this.scene = scene;
@@ -95,7 +106,7 @@ export class MultiplayerClient {
     return `${scheme}://${host}${port}/ws/public`;
   }
 
-  public connect(url?: string, livery?: CarColorConfig, flag?: string) {
+  public connect(url?: string, livery?: CarColorConfig, flag?: string, name?: string) {
     const wsUrl = this.resolveUrl(url);
     console.log('[Multiplayer] Connecting to', wsUrl);
     this.lastUrl = wsUrl;
@@ -103,6 +114,7 @@ export class MultiplayerClient {
     this.status = 'connecting';
     if (livery) this.pendingLivery = livery;
     if (flag) this.pendingFlag = flag;
+    if (name !== undefined) this.pendingName = sanitizeDriverName(name);
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -116,8 +128,14 @@ export class MultiplayerClient {
         this.isConnected = true;
         this.status = 'live';
         this.reconnectAttempts = 0;
-        if (this.pendingLivery && this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'livery', livery: this.pendingLivery, flag: this.pendingFlag }));
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.pendingName) {
+            this.ws.send(JSON.stringify({ type: 'hello', name: this.pendingName }));
+          }
+          if (this.pendingLivery) {
+            this.ws.send(JSON.stringify({ type: 'livery', livery: this.pendingLivery, flag: this.pendingFlag }));
+          }
+          this.requestBoard(this.currentTrackId);
         }
       };
 
@@ -180,6 +198,24 @@ export class MultiplayerClient {
     this.reconnectAttempts = 0;
   }
 
+  /** Switch the viewed track board (e.g. carousel change in Open Track). */
+  public setTrack(trackId: string) {
+    if (typeof trackId !== 'string' || trackId.length === 0) return;
+    this.currentTrackId = trackId;
+    const cached = this.boards.get(trackId);
+    if (cached) {
+      if (this.onLeaderboardUpdate) this.onLeaderboardUpdate([...cached]);
+    } else {
+      this.requestBoard(trackId);
+    }
+  }
+
+  private requestBoard(trackId: string) {
+    if (this.ws && this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'get_leaderboard', trackId }));
+    }
+  }
+
   private handleMessage(msg: any) {
     switch (msg.type) {
       case 'init':
@@ -188,9 +224,8 @@ export class MultiplayerClient {
         for (const p of msg.players) {
           this.addRemotePlayer(p);
         }
-        if (msg.leaderboard && this.onLeaderboardUpdate) {
-          this.onLeaderboardUpdate(msg.leaderboard);
-        }
+        // The per-track board arrives via `leaderboard_update` after the
+        // `get_leaderboard` request sent on open.
         break;
 
       case 'player_joined':
@@ -211,11 +246,28 @@ export class MultiplayerClient {
         this.applyRemoteLivery(msg.id, sanitizeLivery(msg.livery), sanitizeFlag(msg.flag));
         break;
 
-      case 'leaderboard_update':
-        if (this.onLeaderboardUpdate) {
-          this.onLeaderboardUpdate(msg.leaderboard);
+      case 'player_renamed': {
+        const name = sanitizeDriverName(msg.name);
+        if (!name) break;
+        if (msg.id === this.localPlayerId) {
+          this.localPlayerName = name;
+        } else {
+          this.applyRemoteName(msg.id, name);
         }
         break;
+      }
+
+      case 'leaderboard_update': {
+        if (typeof msg.trackId !== 'string' || !Array.isArray(msg.leaderboard)) break;
+        const board = msg.leaderboard
+          .filter((e: any) => e && typeof e.id === 'string' && typeof e.name === 'string' && Number.isFinite(e.lapTime))
+          .slice(0, 100);
+        this.boards.set(msg.trackId, board);
+        if (msg.trackId === this.currentTrackId && this.onLeaderboardUpdate) {
+          this.onLeaderboardUpdate([...board]);
+        }
+        break;
+      }
     }
   }
 
@@ -283,10 +335,21 @@ export class MultiplayerClient {
     remote.model.mesh.position.copy(remote.currentPos);
     remote.model.mesh.quaternion.copy(remote.currentQuat);
     this.scene.add(remote.model.mesh);
+    this.rebuildRemoteLabel(remote);
+  }
+
+  private applyRemoteName(id: string, name: string) {
+    const remote = this.remotePlayers.get(id);
+    if (!remote || remote.name === name) return;
+    remote.name = name;
+    this.rebuildRemoteLabel(remote);
+  }
+
+  private rebuildRemoteLabel(remote: RemotePlayer) {
     this.scene.remove(remote.label);
     (remote.label.material.map as THREE.Texture | null)?.dispose();
     remote.label.material.dispose();
-    remote.label = this.makeNameSprite(remote.name, flag);
+    remote.label = this.makeNameSprite(remote.name, remote.flag);
     remote.label.position.copy(remote.currentPos).add(new THREE.Vector3(0, 2.4, 0));
     this.scene.add(remote.label);
   }
@@ -398,11 +461,12 @@ export class MultiplayerClient {
     }
   }
 
-  public notifyLapCompleted(lapTime: number) {
+  public notifyLapCompleted(lapTime: number, trackId: string) {
     if (this.ws && this.isConnected && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: 'lap_completed',
-        lapTime
+        lapTime,
+        trackId
       }));
     }
   }

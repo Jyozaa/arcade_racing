@@ -16,6 +16,9 @@ export const MIN_LAP_TIME = 15; // seconds; anything faster is impossible / spam
 export const MAX_LAP_TIME = 3600; // seconds; anything slower is a broken client clock
 export const MAX_NAME_CHARS = 24;
 export const MAX_FLAG_CHARS = 16;
+export const MAX_DRIVER_NAME_CHARS = 16;
+export const MAX_TRACK_ID_CHARS = 32;
+export const MAX_BOARDS = 32; // cap distinct per-track boards (junk-track guard)
 export const DEFAULT_ROOM_ID = 'public';
 
 // Default paint rotation for fresh sessions (same palette as legacy server).
@@ -97,6 +100,31 @@ export function sanitizeName(raw: unknown, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+/**
+ * Validate a client `hello` driver name. Returns the clean name, or null
+ * when it is missing/empty/too long (caller keeps the default name).
+ * Control characters are stripped; everything else (unicode, emoji) passes.
+ */
+export function sanitizeDriverName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  // Strip control characters (names may otherwise contain unicode/emoji).
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (cleaned.length === 0 || cleaned.length > MAX_DRIVER_NAME_CHARS) return null;
+  return cleaned;
+}
+
+/**
+ * Validate a `lap_completed` / `get_leaderboard` track id. Track ids are
+ * game-defined slugs (e.g. `apex-gp`); anything else is rejected so clients
+ * can't spawn junk boards. Null = reject.
+ */
+export function sanitizeTrackId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_TRACK_ID_CHARS) return null;
+  return /^[a-z0-9-]+$/.test(trimmed) ? trimmed : null;
+}
+
 export interface SanitizedUpdate {
   position: { x: number; y: number; z: number };
   quaternion: { x: number; y: number; z: number; w: number };
@@ -175,6 +203,48 @@ export function insertLeaderboard(
   next.sort((a, b) => a.lapTime - b.lapTime);
   if (next.length > LEADERBOARD_MAX_ENTRIES) next.length = LEADERBOARD_MAX_ENTRIES;
   return next;
+}
+
+/**
+ * Refresh the display name on every row owned by a renamed player.
+ * Pure: returns the (possibly new) list plus whether anything changed.
+ */
+export function renameLeaderboardEntries(
+  list: LeaderboardEntry[],
+  id: string,
+  name: string,
+): { list: LeaderboardEntry[]; changed: boolean } {
+  let changed = false;
+  const next = list.map((e) => {
+    if (e.id === id && e.name !== name) {
+      changed = true;
+      return { ...e, name };
+    }
+    return e;
+  });
+  return { list: changed ? next : list, changed };
+}
+
+/** Re-validate one persisted leaderboard row; null = drop it. */
+export function sanitizeLeaderboardRow(raw: unknown): LeaderboardEntry | null {
+  const e = raw as Record<string, unknown> | null | undefined;
+  if (!e || typeof e !== 'object') return null;
+  if (typeof e['id'] !== 'string' || typeof e['name'] !== 'string') return null;
+  if (!FINITE(e['lapTime'])) return null;
+  return { id: e['id'], name: e['name'], lapTime: e['lapTime'] as number };
+}
+
+/** Re-validate a persisted per-track board; drops bad rows, keeps the cap. */
+export function sanitizeLeaderboardList(raw: unknown): LeaderboardEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LeaderboardEntry[] = [];
+  for (const row of raw) {
+    const clean = sanitizeLeaderboardRow(row);
+    if (clean) out.push(clean);
+  }
+  out.sort((a, b) => a.lapTime - b.lapTime);
+  if (out.length > LEADERBOARD_MAX_ENTRIES) out.length = LEADERBOARD_MAX_ENTRIES;
+  return out;
 }
 
 /** Room ids are Durable Object names: keep them short and filesystem-safe. */

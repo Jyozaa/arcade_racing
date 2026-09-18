@@ -56,6 +56,9 @@ export class PlayerCar extends CarBase {
 
   private setupInputs() {
     window.addEventListener('keydown', (e) => {
+      // Don't capture keystrokes typed into menu fields (driver name input).
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
       this.keys[e.code] = true;
 
       if (e.code === 'KeyR' && !this.inputLocked && this.resetCooldown <= 0) {
