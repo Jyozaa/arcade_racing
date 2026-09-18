@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Apex Grand Prix - 3D Arcade Racing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&family=Chakra+Petch:ital,wght@0,600;0,700;1,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+
+      <div id="hud-container">
+        <div class="hud-top">
+          <div class="hud-card hud-position-card">
+            <span class="hud-label">POS</span>
+            <div class="position-display">
+              <span id="pos-current" class="pos-num">1</span>
+              <span class="pos-total">/ 8</span>
+            </div>
+          </div>
+
+          <div class="hud-card hud-lap-card">
+            <span class="hud-label">LAP</span>
+            <div class="lap-display">
+              <span id="lap-current" class="lap-num">1</span>
+              <span class="lap-total">/ 3</span>
+            </div>
+          </div>
+
+          <div class="hud-card hud-timer-card">
+            <span class="hud-label">TIME</span>
+            <div id="time-display" class="timer-display">00:00.00</div>
+            <div id="best-time-display" class="best-timer-display">BEST: --:--.--</div>
+          </div>
+        </div>
+
+        <div id="wrong-way-banner" class="wrong-way-banner hidden">
+          <span>WRONG WAY!</span>
+        </div>
+
+        <div id="winner-banner" class="winner-banner hidden">
+          <span id="winner-text">🏁 VORTEX WINS!</span>
+        </div>
+
+        <div id="cutscene-overlay" class="cutscene-overlay hidden">
+          <div class="cutscene-bar cutscene-bar-top"></div>
+          <div id="cutscene-title" class="cutscene-title">FINISH!</div>
+          <div class="cutscene-bar cutscene-bar-bottom"></div>
+        </div>
+
+        <div class="hud-minimap-wrapper">
+          <canvas id="minimap-canvas" width="180" height="180"></canvas>
+        </div>
+
+        <div id="leaderboard-overlay" class="hud-card hud-leaderboard-card hidden">
+          <div class="leaderboard-header"><span id="net-dot" class="net-dot" title="Server connection"></span>⚡ FASTEST LAPS</div>
+          <div id="leaderboard-list" class="leaderboard-list">
+            <div class="leaderboard-empty">Complete a lap to set a time</div>
+          </div>
+        </div>
+
+        <div class="hud-bottom">
+          <div class="hud-controls-hint">
+            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>▲</kbd><kbd>◄</kbd><kbd>▼</kbd><kbd>►</kbd> Drive</span>
+            <span><kbd>SHIFT</kbd> Nitro</span>
+            <span><kbd>SPACE</kbd> Drift</span>
+            <span><kbd>R</kbd> Reset</span>
+            <span><kbd>ESC</kbd> Pause</span>
+          </div>
+
+          <div class="hud-card hud-speedo-card">
+            <div class="speedo-dial">
+              <div class="speedo-number-row">
+                <span id="gear" class="gear-value">1</span>
+                <span id="speed-number" class="speed-value">0</span>
+                <span class="speed-unit">KM/H</span>
+              </div>
+              <div class="rev-meter">
+                <div id="rev-bar" class="rev-fill" style="width: 0%;"></div>
+              </div>
+              <div class="nitro-meter">
+                <div id="nitro-bar" class="nitro-fill" style="width: 100%;"></div>
+                <span class="nitro-label">NITRO ⚡</span>
+              </div>
+              <div id="surface-indicator" class="surface-badge road">ROAD</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="standings-overlay" class="hud-card hud-standings-card hidden">
+          <div class="standings-header">TIMING</div>
+          <div id="standings-list" class="standings-list"></div>
+        </div>
+
+        <div id="touch-controls" class="touch-controls hidden">
+          <div class="touch-left">
+            <button id="touch-left" class="touch-btn">◄</button>
+            <button id="touch-right" class="touch-btn">►</button>
+          </div>
+          <div class="touch-right">
+            <button id="touch-nitro" class="touch-btn touch-nitro">⚡</button>
+            <button id="touch-drift" class="touch-btn">DRIFT</button>
+            <button id="touch-brake" class="touch-btn">▼</button>
+            <button id="touch-gas" class="touch-btn touch-gas">▲</button>
+          </div>
+        </div>
+
+        <div id="countdown-overlay" class="countdown-overlay">
+          <div id="countdown-text" class="countdown-text">READY</div>
+        </div>
+
+        <div id="start-menu" class="screen-modal">
+          <div class="modal-card start-menu-card">
+            <div class="menu-header">
+              <h1 class="game-logo">APEX GP</h1>
+              <div class="game-subtitle">3D ARCADE RACING</div>
+            </div>
+
+            <div class="menu-tabs">
+              <button id="tab-ai" class="tab-btn active">🏁 VS AI</button>
+              <button id="tab-online" class="tab-btn">🌐 OPEN TRACK</button>
+            </div>
+
+            <div id="ai-setup">
+              <div class="race-setup-row">
+                <div class="setup-group">
+                  <span class="setup-label">LAPS</span>
+                  <div class="segmented" id="laps-selector">
+                    <button data-laps="1" class="seg-btn">1</button>
+                    <button data-laps="3" class="seg-btn active">3</button>
+                    <button data-laps="5" class="seg-btn">5</button>
+                  </div>
+                </div>
+                <div class="setup-group">
+                  <span class="setup-label">AI LEVEL</span>
+                  <div class="segmented" id="difficulty-selector">
+                    <button data-difficulty="ROOKIE" class="seg-btn">ROOKIE</button>
+                    <button data-difficulty="PRO" class="seg-btn active">PRO</button>
+                    <button data-difficulty="ACE" class="seg-btn">ACE</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setup-group setup-block">
+                <span class="setup-label">CAR</span>
+                <div class="cycle-row">
+                  <button id="car-prev" class="cycle-btn" title="Previous car">◄</button>
+                  <div id="car-current" class="cycle-current"></div>
+                  <button id="car-next" class="cycle-btn" title="Next car">►</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="setup-group setup-block">
+              <span class="setup-label">TRACK</span>
+              <div class="cycle-row">
+                <button id="track-prev" class="cycle-btn" title="Previous track">◄</button>
+                <div id="track-current" class="cycle-current"></div>
+                <button id="track-next" class="cycle-btn" title="Next track">►</button>
+              </div>
+            </div>
+
+            <div class="setup-group setup-block">
+              <span class="setup-label">FLAG</span>
+              <div class="cycle-row">
+                <button id="flag-prev" class="cycle-btn" title="Previous flag">◄</button>
+                <div id="flag-current" class="cycle-current"></div>
+                <button id="flag-next" class="cycle-btn" title="Next flag">►</button>
+              </div>
+            </div>
+
+            <div class="mode-selection-group">
+              <button id="btn-start" class="btn btn-primary mode-btn">
+                <span id="start-title" class="mode-title">🏁 Start Race vs AI</span>
+                <span id="start-desc" class="mode-desc">Championship grid • 3 Laps • 8 Racers • PRO</span>
+              </button>
+            </div>
+            <div id="menu-best" class="menu-best hidden">👑 Saved best lap: <span id="menu-best-time">--:--.--</span></div>
+          </div>
+        </div>
+
+        <div id="finish-screen" class="screen-modal hidden">
+          <div class="modal-card">
+            <div class="trophy-icon">🏆</div>
+            <h1 id="finish-title" class="modal-title">RACE FINISHED!</h1>
+            <div class="finish-rank-pill">
+              FINAL POSITION: <span id="finish-pos" class="highlight-gold">1st</span> / 8
+            </div>
+            <div id="finish-winner-line" class="finish-winner-line hidden">
+              🏁 <span id="finish-winner-name">VORTEX</span> WINS THE RACE
+            </div>
+
+            <div class="finish-stats-grid">
+              <div class="stat-box">
+                <span class="stat-label">TOTAL TIME</span>
+                <span id="finish-total-time" class="stat-val">01:45.32</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">BEST LAP</span>
+                <span id="finish-best-lap" class="stat-val">00:34.18</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">TOP SPEED</span>
+                <span id="finish-top-speed" class="stat-val">218 KM/H</span>
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button id="btn-restart" class="btn btn-primary">RACE AGAIN</button>
+              <button id="btn-menu-finish" class="btn btn-secondary">MENU</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="pause-screen" class="screen-modal hidden">
+          <div class="modal-card">
+            <h2 class="modal-title">GAME PAUSED</h2>
+            <div class="pause-controls-list">
+              <p><span>Accelerate:</span> <strong>W / Up Arrow</strong></p>
+              <p><span>Steer:</span> <strong>A, D / Left, Right Arrow</strong></p>
+              <p><span>Brake / Reverse:</span> <strong>S / Down Arrow</strong></p>
+              <p><span>Nitro Boost:</span> <strong>Shift</strong></p>
+              <p><span>Handbrake / Drift:</span> <strong>Spacebar</strong></p>
+              <p><span>Reset Car to Track:</span> <strong>R</strong></p>
+            </div>
+            <div class="modal-actions">
+              <button id="btn-resume" class="btn btn-primary">RESUME</button>
+              <button id="btn-restart-pause" class="btn btn-secondary">RESTART</button>
+            </div>
+            <div class="modal-actions modal-actions-single">
+              <button id="btn-quit-pause" class="btn btn-ghost">QUIT TO MENU</button>
+            </div>
+          </div>
+        </div>
+
+        <button id="btn-audio-toggle" class="audio-toggle-btn" title="Toggle Sound">
+          🔊
+        </button>
+
+        <button id="btn-menu-hud" class="menu-toggle-btn hidden" title="Back to Menu">
+          ☰ MENU
+        </button>
+      </div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
