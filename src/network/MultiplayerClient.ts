@@ -69,7 +69,11 @@ export class MultiplayerClient {
     }
   }
 
-  // explicit arg > ?server= override > saved override > same-origin > localhost:8080.
+  // explicit arg > ?server= override > saved override > same-origin /ws/public.
+  // The default needs no configuration: https://domain serves the game and
+  // wss://domain/ws/public serves multiplayer from the same origin
+  // (Cloudflare Worker + RaceRoom Durable Object). Locally, `wrangler dev`
+  // serves both on one port, and Vite dev proxies /ws there (vite.config.ts).
   private resolveUrl(url?: string): string {
     if (url) return url;
     try {
@@ -87,8 +91,8 @@ export class MultiplayerClient {
     const secure = window.location.protocol === 'https:';
     const scheme = secure ? 'wss' : 'ws';
     const host = window.location.hostname || 'localhost';
-    if (!window.location.port) return `${scheme}://${host}`;
-    return `${scheme}://${host}:8080`;
+    const port = window.location.port ? `:${window.location.port}` : '';
+    return `${scheme}://${host}${port}/ws/public`;
   }
 
   public connect(url?: string, livery?: CarColorConfig, flag?: string) {

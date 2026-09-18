@@ -886,6 +886,19 @@ html, body {
   100% { transform: scale(1); opacity: 1; letter-spacing: 6px; }
 }
 
+.cutscene-skip-hint {
+  align-self: center;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: rgba(232, 246, 255, 0.65);
+  border: 1px solid rgba(232, 246, 255, 0.3);
+  border-radius: 999px;
+  padding: 6px 16px;
+  margin-top: 12px;
+}
+
 /* WINNER LINE ON THE FINISH SCREEN */
 .finish-winner-line {
   font-family: var(--font-display);

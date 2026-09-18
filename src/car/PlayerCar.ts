@@ -15,6 +15,11 @@ export class PlayerCar extends CarBase {
   public touch: { steer: number; throttle: number; brake: boolean; nitro: boolean; drift: boolean } = {
     steer: 0, throttle: 0, brake: false, nitro: false, drift: false,
   };
+  // Set by the finish cinematic: player input is ignored and the car keeps
+  // rolling under a gentle pursuit autopilot instead of freezing.
+  public inputLocked: boolean = false;
+  public cinematicAuto: boolean = false;
+  private autoTmp: THREE.Vector3 = new THREE.Vector3();
 
   constructor(trackData: TrackData) {
     const def = getCarDef('apex-s1');
@@ -53,7 +58,7 @@ export class PlayerCar extends CarBase {
     window.addEventListener('keydown', (e) => {
       this.keys[e.code] = true;
 
-      if (e.code === 'KeyR' && this.resetCooldown <= 0) {
+      if (e.code === 'KeyR' && !this.inputLocked && this.resetCooldown <= 0) {
         this.resetToNearestTrackPoint();
         this.resetCooldown = 1.0; // 1s cooldown
       }
@@ -67,6 +72,20 @@ export class PlayerCar extends CarBase {
   public update(delta: number) {
     if (this.resetCooldown > 0) {
       this.resetCooldown -= delta;
+    }
+
+    if (this.inputLocked) {
+      if (this.cinematicAuto) {
+        this.updateCinematicAuto();
+      } else {
+        this.steeringInput = 0;
+        this.throttleInput = 0;
+        this.handbrake = false;
+        this.nitroActive = false;
+      }
+      this.updatePhysics(delta);
+      this.updateWrongWay();
+      return;
     }
 
     let steer = 0;
@@ -90,6 +109,31 @@ export class PlayerCar extends CarBase {
 
     this.updatePhysics(delta);
 
+    this.updateWrongWay();
+  }
+
+  // Gentle pursuit driver for the finish cinematic: follows the racing line
+  // at part throttle so the car keeps rolling naturally for the cameras.
+  private updateCinematicAuto() {
+    const ahead = this.trackData.getPointInfoAt(this.currentTrackT + 0.004);
+    this.autoTmp.subVectors(ahead.position, this.position);
+    this.autoTmp.y = 0;
+    if (this.autoTmp.lengthSq() > 1e-6) {
+      this.autoTmp.normalize();
+      const targetYaw = Math.atan2(-this.autoTmp.x, -this.autoTmp.z);
+      let diff = targetYaw - this.yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      this.steeringInput = THREE.MathUtils.clamp(diff * 2.2, -0.7, 0.7);
+    } else {
+      this.steeringInput = 0;
+    }
+    this.throttleInput = 0.45;
+    this.handbrake = false;
+    this.nitroActive = false;
+  }
+
+  private updateWrongWay() {
     const trackInfo = this.trackData.getClosestTrackInfo(this.position);
     const dot = this.forward.dot(trackInfo.tangent);
     this.isWrongWay = dot < -0.3 && Math.abs(this.speed) > 3;

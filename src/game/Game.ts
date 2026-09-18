@@ -5,6 +5,7 @@ import { Environment } from '../track/Environment';
 import { PlayerCar } from '../car/PlayerCar';
 import { AICar, AIPersonality } from '../car/AICar';
 import { ChaseCamera } from '../camera/ChaseCamera';
+import { FinishCinematic } from '../camera/FinishCinematic';
 import { RaceManager, GameMode } from '../race/RaceManager';
 import { AudioEngine } from '../race/AudioEngine';
 import { HUD } from '../ui/HUD';
@@ -27,6 +28,7 @@ export class Game {
   private aiCars: AICar[] = [];
   private raceManager: RaceManager;
   private audioEngine: AudioEngine;
+  private finishCinematic: FinishCinematic = new FinishCinematic();
   private hud: HUD;
   private multiplayerClient: MultiplayerClient;
   private particles: ParticleSystem;
@@ -144,6 +146,11 @@ export class Game {
         this.multiplayerClient.notifyLapCompleted(lapTime);
       }
     };
+    this.raceManager.onPlayerFinished = () => {
+      if (this.currentMode === 'AI_RACE') {
+        this.finishCinematic.start(this.playerCar, this.camera.camera);
+      }
+    };
 
     this.hud.onSelectMode = (mode) => {
       this.startMode(mode);
@@ -159,6 +166,11 @@ export class Game {
     };
     this.hud.onQuitToMenu = () => {
       this.quitToMenu();
+    };
+    this.hud.onSkipCinematic = () => {
+      // Escape during the finish sequence: jump straight to results.
+      this.finishCinematic.requestSkip();
+      this.raceManager.skipCutscene();
     };
 
     this.camera.reset(this.playerCar);
@@ -183,6 +195,7 @@ export class Game {
   private startMode(mode: GameMode) {
     this.currentMode = mode;
     this.inMenu = false;
+    this.endFinishCinematic();
 
     if (mode === 'AI_RACE') {
       this.multiplayerClient.disconnect();
@@ -213,6 +226,7 @@ export class Game {
 
   private quitToMenu() {
     this.multiplayerClient.disconnect();
+    this.endFinishCinematic();
     this.inMenu = true;
     this.raceManager.state = 'PAUSED';
     this.hud.showMenu();
@@ -252,6 +266,13 @@ export class Game {
     } else {
       this.raceManager.setupStartingGrid();
     }
+    this.camera.reset(this.playerCar);
+  }
+
+  // Restore normal control + chase camera after the cinematic (or skip).
+  private endFinishCinematic() {
+    if (!this.finishCinematic.isActive) return;
+    this.finishCinematic.stop(this.playerCar);
     this.camera.reset(this.playerCar);
   }
 
@@ -424,11 +445,20 @@ export class Game {
 
       if (this.raceManager.state !== 'FINISHED') {
         if (cutscene && this.currentMode === 'AI_RACE') {
-          const stats = this.raceManager.getStats();
-          this.camera.updateCutscene(this.playerCar, stats.cutsceneProgress, delta);
+          // 3-shot finish sequence; when it completes, show results.
+          const done = this.finishCinematic.update(
+            this.camera.camera, this.playerCar, this.trackData, delta,
+          );
+          if (done) this.raceManager.skipCutscene();
         } else {
           this.camera.update(this.playerCar, delta);
         }
+      }
+
+      // Natural finish or Escape-skip: hand control back to the player and
+      // re-seat the chase camera before the results screen takes over.
+      if (this.finishCinematic.isActive && this.raceManager.state !== 'CUTSCENE') {
+        this.endFinishCinematic();
       }
 
       // Shadow frustum follows the player.

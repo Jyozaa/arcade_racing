@@ -68,34 +68,6 @@ export class ChaseCamera {
     this.camera.updateProjectionMatrix();
   }
 
-  // Finish cutscene: slow rising orbit, progress 0..1.
-  public updateCutscene(player: PlayerCar, progress: number, delta: number) {
-    const p = THREE.MathUtils.clamp(progress, 0, 1);
-    const angle = p * Math.PI * 1.1; // ~200° sweep
-    const radius = THREE.MathUtils.lerp(9.0, 14.0, p);
-    const height = THREE.MathUtils.lerp(3.2, 7.5, p);
-
-    const behind = player.forward.clone().multiplyScalar(-1);
-    const baseAngle = Math.atan2(behind.x, behind.z);
-    const orbitAngle = baseAngle + angle;
-    const dir = new THREE.Vector3(Math.sin(orbitAngle), 0, Math.cos(orbitAngle));
-
-    this.targetPosition.copy(player.position)
-      .addScaledVector(dir, radius)
-      .add(new THREE.Vector3(0, height, 0));
-    this.targetLookAt.copy(player.position)
-      .add(new THREE.Vector3(0, 1.2, 0));
-
-    const posDamp = 3.0;
-    this.camera.position.lerp(this.targetPosition, Math.min(1.0, posDamp * delta));
-    const lookDamp = 4.0;
-    this.currentLookAt.lerp(this.targetLookAt, Math.min(1.0, lookDamp * delta));
-    this.camera.lookAt(this.currentLookAt);
-
-    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this.maxFov, 2.0 * delta);
-    this.camera.updateProjectionMatrix();
-  }
-
   public reset(player: PlayerCar) {
     const carPos = player.position;
     const carForward = player.forward;

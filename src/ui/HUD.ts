@@ -94,6 +94,8 @@ export class HUD {
   public onSelectCar?: (carId: string) => void;
   public onSelectFlag?: (emoji: string) => void;
   public onQuitToMenu?: () => void;
+  // Wired by Game: Escape during the finish cinematic skips to results.
+  public onSkipCinematic?: () => void;
   // Wired by Game: live remote-driver positions for the open-track minimap.
   public getRemoteDots?: () => { x: number; z: number }[];
   // Wired by Game: server state for the leaderboard status dot.
@@ -299,10 +301,14 @@ export class HUD {
       this.btnAudioToggleEl.innerText = isMuted ? '🔇' : '🔊';
     });
 
-    // ESC toggles pause, ignored while the start menu is open.
+    // ESC pauses, or skips the finish cinematic. Ignored in the start menu.
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {
         if (!this.startMenuEl.classList.contains('hidden')) return;
+        if (this.raceManager.state === 'CUTSCENE') {
+          if (this.onSkipCinematic) this.onSkipCinematic();
+          return;
+        }
         if (this.raceManager.state === 'RACING') {
           this.raceManager.state = 'PAUSED';
           this.pauseScreenEl.classList.remove('hidden');

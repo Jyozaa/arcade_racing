@@ -4,6 +4,7 @@ import { AICar } from '../car/AICar';
 import { CarBase } from '../car/CarBase';
 import { TrackData } from '../track/TrackData';
 import { AudioEngine } from './AudioEngine';
+import { FINISH_CINEMATIC_DURATION } from '../camera/FinishCinematic';
 
 export type RaceState = 'COUNTDOWN' | 'RACING' | 'CUTSCENE' | 'FINISHED' | 'PAUSED';
 export type GameMode = 'AI_RACE' | 'OPEN_TRACK';
@@ -59,7 +60,8 @@ export class RaceManager {
   public hasWinner: boolean = false;
 
   public cutsceneTimer: number = 0;
-  public cutsceneDuration: number = 3.5;
+  // 3-shot finish cinematic: 2.0s tracking + 2.0s pass-by + 2.5s hero.
+  public cutsceneDuration: number = FINISH_CINEMATIC_DURATION;
   public playerFinishTime: number = 0;
   public cutsceneControllingCamera: boolean = false;
 
@@ -171,9 +173,7 @@ export class RaceManager {
       this.resolveCarCollisions();
       this.calculateRankings();
       if (this.cutsceneTimer >= this.cutsceneDuration) {
-        this.state = 'FINISHED';
-        this.cutsceneControllingCamera = false;
-        this.audioEngine.playFinishFanfare();
+        this.finishCutscene();
       }
       return { countdownText: null };
     }
@@ -336,6 +336,19 @@ export class RaceManager {
 
   public getStandings(): CarBase[] {
     return this.sortedStandings.length > 0 ? [...this.sortedStandings] : [...this.allCars];
+  }
+
+  /** Skip the finish cinematic (Escape): straight to results, state kept clean. */
+  public skipCutscene() {
+    if (this.state !== 'CUTSCENE') return;
+    this.cutsceneTimer = this.cutsceneDuration;
+    this.finishCutscene();
+  }
+
+  private finishCutscene() {
+    this.state = 'FINISHED';
+    this.cutsceneControllingCamera = false;
+    this.audioEngine.playFinishFanfare();
   }
 
   public getCarDisplayName(car: CarBase): string {
